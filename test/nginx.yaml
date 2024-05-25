@@ -4,11 +4,12 @@ metadata:
   name: nginx
 spec:
   type: LoadBalancer
+  externalTrafficPolicy: Local
   ports:
   - name: http
-    nodePort: 30080
-    port: 8000
+    port: 80
     targetPort: 80
+    # nodePort: 30080  # or use the commented-out hostPort in the pod
   selector:
     name: nginx
 ---
@@ -33,3 +34,4 @@ spec:
         name: nginx
         ports:
         - containerPort: 80
+          # hostPort: 80  # or use the commented-out nodePort in the service
