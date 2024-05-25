@@ -15,6 +15,14 @@ _CoreDNS_ doesn't actually provide true load balancing. It can only serve multip
 
 # Usage
 
+## Notes
+
+The workloads running in a cluster with _dnslb_ can be exposed in different ways:
+- If the port numbers can be >= 30000 (or the cluster admin can override the node port range), then the `nodePort` field in the service ports will do the job, though the `externalTrafficPolicy: Local` field should also be set, so that packets are not re-routed to different nodes.
+- Pods can also expose their ports directly through the `hostNetwork: true` and/or `hostPort` fields, but only when one pod per port per node is acceptable (because the pod directly binds the port).
+- In case of HTTP(S) traffic, an ingress controller can be deployed, so that `LoadBalancer` services direct traffic to the ingress rather than each workload separately.
+- In some cases, the `nodePort` solution can be combined with an external reverse proxy or simple port forwarding to achieve the desired outcome.
+
 ## Deployment
 
 To deploy _dnslb_ to your cluster in the `dnslb` namespace:
@@ -73,7 +81,7 @@ Run `NOCLEANUP=1 ./run.sh` to run the tests and retain the environment for furth
 
 To use an alternative, local image for _dnslb_, supply its name in the `IMAGE` variable. The default domain is `example.org` and can be overridden with the `DOMAIN` variable.
 
-The test creates a simple `nginx` deployment with an accompanying service to demonstrate and verify the functionality.
+The test creates a simple `nginx` deployment with an accompanying service to demonstrate and verify the functionality. Go to [YAML](/test/nginx.yaml) file to learn the details and make some adjustments.
 
 The controller binary can be run locally (outside cluster) if supplied with the kubeconfig file:
 ```sh
