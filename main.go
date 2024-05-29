@@ -25,19 +25,28 @@ import (
 )
 
 const (
-	nodeAddressAnnotation = "dnslb.loadworks.com/address"
+	dnslbNamespace           = "dnslb.loadworks.com"
+	nodeAddressAnnotation    = dnslbNamespace + "/address"
+	loadBalancerDefaultClass = dnslbNamespace + "/lb-class"
 )
 
 var log = logf.Log.WithName("dnslb")
 
 func main() {
+	lbClass := flag.String("lb-class", loadBalancerDefaultClass, "load balancer `class` of services managed by the controller")
+	lbDefault := flag.Bool("lb-default", true, "act as the default load balancer implementation and manage services without a set load balancer class, false to disable")
 	sync := flag.Int64("sync", 0, "forced reconciliation interval in seconds, 0 to disable")
 	flag.Parse()
 
 	logf.SetLogger(zap.New())
-	log.Info("starting")
+	log.Info("starting", "loadBalancerClass", lbClass, "loadBalancerDefault", lbDefault)
 
 	duration := time.Duration(*sync) * time.Second
+	lbMatcher := loadBalancerMatcher{
+		MatchClass:        *lbClass,
+		MatchDefaultClass: *lbDefault,
+	}
+
 	mgr, err := manager.New(config.GetConfigOrDie(), manager.Options{
 		SyncPeriod: &duration,
 	})
@@ -59,18 +68,18 @@ func main() {
 		ControllerManagedBy(mgr).
 		WithEventFilter(predicate.Funcs{
 			CreateFunc: func(e event.CreateEvent) bool {
-				return isRelevant(e.Object)
+				return isRelevant(e.Object, lbMatcher)
 			},
 			DeleteFunc: func(e event.DeleteEvent) bool {
-				return isRelevant(e.Object)
+				return isRelevant(e.Object, lbMatcher)
 			},
 			UpdateFunc: func(e event.UpdateEvent) bool {
-				if isRelevant(e.ObjectOld) || isRelevant(e.ObjectNew) {
+				if isRelevant(e.ObjectOld, lbMatcher) || isRelevant(e.ObjectNew, lbMatcher) {
 					// select only the relevant changes
 					switch old := e.ObjectOld.(type) {
 					case *corev1.Service:
 						new := e.ObjectNew.(*corev1.Service)
-						return old.Spec.Type != new.Spec.Type || !reflect.DeepEqual(old.Spec.Selector, new.Spec.Selector)
+						return old.Spec.Type != new.Spec.Type || !reflect.DeepEqual(old.Spec.Selector, new.Spec.Selector) || old.Spec.LoadBalancerClass != new.Spec.LoadBalancerClass
 					case *corev1.Pod:
 						new := e.ObjectNew.(*corev1.Pod)
 						return old.Status.Phase != new.Status.Phase || !reflect.DeepEqual(old.Labels, new.Labels)
@@ -84,7 +93,7 @@ func main() {
 				return false
 			},
 			GenericFunc: func(e event.GenericEvent) bool {
-				return isRelevant(e.Object)
+				return isRelevant(e.Object, lbMatcher)
 			},
 		}).
 		For(&corev1.Service{}).
@@ -107,6 +116,9 @@ func main() {
 				// reconcile each service matching this pod
 			next:
 				for _, svc := range svcs.Items {
+					if !lbMatcher.Matches(&svc) {
+						continue
+					}
 					if len(svc.Spec.Selector) == 0 {
 						continue
 					}
@@ -140,6 +152,9 @@ func main() {
 				}
 				// reconcile each service
 				for _, svc := range svcs.Items {
+					if !lbMatcher.Matches(&svc) {
+						continue
+					}
 					reqs = append(reqs, reconcile.Request{NamespacedName: types.NamespacedName{
 						Namespace: svc.Namespace,
 						Name:      svc.Name,
@@ -148,7 +163,7 @@ func main() {
 				return reqs
 			},
 		)).
-		Complete(&ServiceReconciler{})
+		Complete(&ServiceReconciler{lbMatcher: lbMatcher})
 	if err != nil {
 		log.Error(err, "could not create controller")
 		os.Exit(1)
@@ -160,11 +175,30 @@ func main() {
 	}
 }
 
+// Encapsulate LB matching behavior
+type loadBalancerMatcher struct {
+	MatchClass        string
+	MatchDefaultClass bool
+}
+
+// Returns whether a service should be handled
+func (m *loadBalancerMatcher) Matches(svc *corev1.Service) bool {
+	if svc == nil {
+		return false
+	} else if svc.Spec.Type != corev1.ServiceTypeLoadBalancer { // only load balancers
+		return false
+	} else if svc.Spec.LoadBalancerClass == nil { // handle default LB class
+		return m.MatchDefaultClass
+	} else { // must be the controller class
+		return m.MatchClass == *svc.Spec.LoadBalancerClass
+	}
+}
+
 // isRelevant checks if the object should be watched/reconciled
-func isRelevant(object client.Object) bool {
+func isRelevant(object client.Object, m loadBalancerMatcher) bool {
 	switch obj := object.(type) {
 	case *corev1.Service:
-		return obj.Spec.Type == corev1.ServiceTypeLoadBalancer
+		return m.Matches(obj)
 	case *corev1.Pod:
 		return obj.Status.Phase == corev1.PodRunning
 	case *corev1.Node:
@@ -177,6 +211,7 @@ func isRelevant(object client.Object) bool {
 // ServiceReconciler ...
 type ServiceReconciler struct {
 	client.Client
+	lbMatcher loadBalancerMatcher
 }
 
 // Reconcile updates the status of Service objects
@@ -190,7 +225,7 @@ func (a *ServiceReconciler) Reconcile(ctx context.Context, req reconcile.Request
 	log.Info("reconciling service", "name", svc.Name, "type", svc.Spec.Type)
 	svc.Status.LoadBalancer = corev1.LoadBalancerStatus{}
 
-	if svc.Spec.Type == corev1.ServiceTypeLoadBalancer {
+	if a.lbMatcher.Matches(svc) {
 		// list the relevant pods
 		pods := &corev1.PodList{}
 		err = a.List(

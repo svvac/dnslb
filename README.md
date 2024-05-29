@@ -67,10 +67,25 @@ If the DNS server IPs are publicly reachable, any user from the internet should 
 
 ## Customization
 
+### Override node IP address
+
 To override `my-node`'s ingress IP address used by _dnslb_ to `1.2.3.4` (eg. in case of multiple network interfaces):
 ```bash
 kubectl annotate node my-node dnslb.loadworks.com/address=1.2.3.4
 ```
+
+### Load Balancer class
+
+_dnslb_ can cooperate with other load balancer controllers by respecting the [`loadBalancerClass`][lb-class] field.
+By default it manages services with the class `dnslb.loadworks.com/lb-class`.
+This can be configured by passing the `-lb-class a-custom-class` flag to the `dnslb` binary.
+
+Additionally, by default, the controller assumes the role of the default load balancer implementation and also manages services without a class set.
+This can be disabled by passing the `-lb-default=false` flag to the `dnslb` binary.
+
+[lb-class]: https://kubernetes.io/docs/concepts/services-networking/service/#load-balancer-class
+
+### Periodic state synchronization
 
 If the user wants to periodically re-generate the service state regardless of any triggering changes, an optional argument like `-sync 300` can be passed to the `dnslb` binary, specifying the forced reconciliation interval in seconds.
 
