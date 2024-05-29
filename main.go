@@ -100,7 +100,7 @@ func main() {
 		Watches(&source.Kind{Type: &corev1.Pod{}}, handler.EnqueueRequestsFromMapFunc(
 			func(a client.Object) []reconcile.Request {
 				pod := a.(*corev1.Pod)
-				log.Info("pod watch", "name", pod.Name)
+				log.Info("pod watch", "namespace", pod.Namespace, "name", pod.Name)
 				reqs := []reconcile.Request{}
 				// get LB services from the pod's namespace
 				svcs := &corev1.ServiceList{}
@@ -222,7 +222,7 @@ func (a *ServiceReconciler) Reconcile(ctx context.Context, req reconcile.Request
 	if err != nil {
 		return reconcile.Result{}, err
 	}
-	log.Info("reconciling service", "name", svc.Name, "type", svc.Spec.Type)
+	log.Info("reconciling service", "namespace", svc.Namespace, "name", svc.Name, "type", svc.Spec.Type, "class", svc.Spec.LoadBalancerClass)
 	svc.Status.LoadBalancer = corev1.LoadBalancerStatus{}
 
 	if a.lbMatcher.Matches(svc) {
@@ -270,7 +270,7 @@ func (a *ServiceReconciler) Reconcile(ctx context.Context, req reconcile.Request
 		svc.Status.LoadBalancer.Ingress = ings
 	}
 
-	log.Info("updating service", "status", svc.Status)
+	log.Info("updating service", "namespace", svc.Namespace, "name", svc.Name, "status", svc.Status)
 	err = a.Status().Update(ctx, svc)
 	return reconcile.Result{}, err
 }
